@@ -1,9 +1,3 @@
-//update midi piano wav as needed
-(
-("\"/Applications/MuseScore 3.app/Contents/MacOS/mscore\" \"/Users/maestro/Documents/Coding/granular-spectrum/resources/Eternal Present 5 - Full score - Flow 1.mid\" -o  \"/Users/maestro/Documents/Coding/granular-spectrum/resources/piano.wav\"").systemCmd;
-)
-
-
 (
 p = ProxySpace.push(s);
 fork{
@@ -20,7 +14,18 @@ fork{
 
 			//p.fadeTime = 2;
 
+			s.sync;
+
 			d = ();
+
+			d[\live] = true;
+
+			if(d[\live]){
+				d[\numRecChannels] = 3;//3 for live
+			}
+			{
+				d[\numRecChannels] = 2;//3 for live
+			};
 
 			d.amp = 1;
 
@@ -597,7 +602,8 @@ fork{
 				"trM2.wav",
 				"trM3.wav",
 				"gradual_veiling_clustered3.wav",
-				"hbcDroneLoop.wav"
+				"hbcDroneLoop.wav",
+				"drammaticCrashWithBuild1.wav"
 			];
 
 			names.do({arg n;
@@ -802,8 +808,9 @@ fork{
 				},
 				autoPan: \filter -> {
 					|sig|
-					var rate = 1 / 5.0;
-					var mod = SinOsc.kr(rate);
+					var rate = 1 / (5.0 + Latch.kr(WhiteNoise.kr(), Impulse.kr(0)).range(0,1));
+					var rand = Latch.kr(WhiteNoise.kr(), Impulse.kr(0)).range(0,2pi);
+					var mod = SinOsc.kr(rate, rand);
 					sig = Mix.ar(sig).range(-0.25, 0.25);
 					sig = Pan2.ar(sig, mod);
 					sig;
@@ -1047,29 +1054,39 @@ fork{
 			);
 			s.sync;
 
-			~codaBells = Pbind(
-				\instrument, \hb,
-				\buff, Pfunc({
-					var chordOptions, chordDef, chord, chordType, trans, oct, pc, note;
-					chordOptions = d.coda.chordOptions;
-					d.coda.chordNum = chordOptions[((Main.elapsedTime / 10).floor) % chordOptions.size];
-					chordDef = d.coda.prog[d.coda.chordNum];
-					chordType = d.chordTypes.split11;
-					if(chordDef[0] == 1){chordType = d.chordTypes.maj9Add6};
-					trans = chordDef[1];
-					chord = (chordType + trans) % 12;
-					pc = chord.choose;
-					oct = 6.rand;
-					note = 36 + (12 * oct) + pc;
-					d.data.buffs[("Handbells/" ++ note).asSymbol];
-				}),
-				\amp, Pfunc({1.0.rand}),
-				\dur, Pfunc({0.05 + 0.05.rand});
-			);
+			d.makeCodaBells = {
+				var octPhase = (2pi).rand, octPer = 10 + 5.0.rand, durPhase = (2pi).rand, durPer = 7 + 1.0.rand;
+				Pbind(
+					\instrument, \hb,
+					\buff, Pfunc({
+						var chordOptions, chordDef, chord, chordType, trans, oct, pc, note, targ;
+						chordOptions = d.coda.chordOptions;
+						d.coda.chordNum = chordOptions[((Main.elapsedTime / 10).floor) % chordOptions.size];
+						chordDef = d.coda.prog[d.coda.chordNum];
+						chordType = d.chordTypes.split11;
+						if(chordDef[0] == 1){chordType = d.chordTypes.maj9Add6};
+						trans = chordDef[1];
+						chord = (chordType + trans) % 12;
+						pc = chord.choose;
 
-			~codaBells[1] = \filter -> {
+						targ = (12 * (3 + 3 * ((octPhase + (2pi * Main.elapsedTime / octPer)).sin + 1) / 2));
+
+						oct = ((targ - pc) / 12).asInteger;//((targ - pc) / 12).round;//;((targ / pc).log / 2.log).round;//6.rand;
+
+						note = 36 + (12 * oct) + pc;
+						d.data.buffs[("Handbells/" ++ note).asSymbol];
+					}),
+					\amp, Pfunc({1.0.rand}),
+					\dur, Pfunc({
+						var durFact;
+						durFact = 0.1 + (0.4 * (((durPhase + (2pi * Main.elapsedTime / durPer)).sin + 1) / 2));
+						durFact + durFact.rand});
+				);
+			};
+
+			d.filters.codaBellsFilter = \filter -> {
 				|sig|
-				var local, mix, decay = 0.9;
+				var local, mix, decay = 0.9, outSig, env, trig;
 
 				mix = SinOsc.kr(1/7.0,0.5).range(0,1);
 
@@ -1083,15 +1100,51 @@ fork{
 				local = LeakDC.ar(local);
 				LocalOut.ar(local * decay);
 
-				SelectX.ar(mix, [local, sig]);
+				outSig = SelectX.ar(mix, [local, sig]);
+
+				trig = Trig.kr((Latch.kr(WhiteNoise.kr(), Impulse.kr(1/SinOsc.kr(15).range(0.125,5))) > 0.5), 0.1);
+				env = EnvGen.kr(Env.new([0,1,0],[1,0.1],[10,-3]),trig);
+
+				(outSig * 0.1) + (outSig * 0.9 * env);
 
 			};
 
+			~codaBells1 = d[\makeCodaBells].value;
+			~codaBells2 = d[\makeCodaBells].value;
+			~codaBells3 = d[\makeCodaBells].value;
+
+			~codaBells1[1] = d.filters.codaBellsFilter;
+			~codaBells2[1] = d.filters.codaBellsFilter;
+			~codaBells3[1] = d.filters.codaBellsFilter;
+
+			~codaBells1[2] = d.filters.autopan;
+			~codaBells2[2] = d.filters.autopan;
+			~codaBells3[2] = d.filters.autopan;
+
+			~codaBellsMix[0] = ~codaBells1;
+			~codaBellsMix[1] = ~codaBells2;
+			~codaBellsMix[2] = ~codaBells3;
+
+			~codaBells = ~codaBellsMix;
+			~codaBells[1] = \filter -> {
+				|sig|
+				var env;
+				env = (SinOsc.kr(1/27.0).madd(3, 2.9)).clip;
+				sig * env;
+			};
+
+			~codaBells[2] = \filter -> {
+				|sig|
+				FreeVerb2.ar(sig[0], sig[1], SinOsc.kr(1/10.0).range(0, 1), 0.9);
+			};
+
+			d.codaBellArr = [~codaBells1, ~codaBells2,~codaBells3];
+
 			s.sync;
-			~codaBells.pause;
+			d.codaBellArr.do{|cb| cb.pause};
 
 			~mix = {SinOsc.kr(1/9.0).range(0.5,0.2)};
-			~codaMix = (~codaBells * 0.01 * ~mix) + (~piano * (1 - ~mix));
+			~codaMix = (~codaBells * 0.1 * ~mix) + (~piano * (1 - ~mix));
 
 			13.do({arg n;
 				var buff = d.data.buffs[("amSpec_a" ++ (n+1)).asSymbol],
@@ -1129,7 +1182,7 @@ fork{
 			~crash = {
 				var buff, sig, trig;
 				trig = \trig.tr(0);
-				buff = d.data.buffs[("drammaticCrash").asSymbol];
+				buff = d.data.buffs[("drammaticCrashWithBuild1").asSymbol];
 				sig = PlayBuf.ar(2, buff, BufRateScale.kr(buff), trig);
 				sig = FreeVerb.ar(sig);
 				sig;
@@ -1164,10 +1217,12 @@ fork{
 
 
 			d.cueTimes = [0, (60 * 1) + 30, (60 * 2) + 45, (60 * 3) + 0, (60 * 3) + 15, (60 * 3) + 45,
-				(60 * 4) + 45, (60 * 4) + 52, (60 * 5) + 00, (60 * 5) + 15, (60 * 5) + 22, (60 * 5) + 30, (60 * 5) + 45, (60 * 6) + 0, (60 * 6) + 15, (60 * 6) + 30, (60 * 6) + 45, (60 * 7) + 30, (60 * 7) + 45, (60 * 8) + 0, (60 * 8) + 15, (60 * 8) + 30, (60 * 8) + 45, (60 * 9) + 0];
+				(60 * 4) + 45, (60 * 4) + 52, (60 * 5) + 00, (60 * 5) + 15, (60 * 5) + 22, (60 * 5) + 30, (60 * 5) + 45, (60 * 6) + 0, (60 * 6) + 15, (60 * 6) + 30, (60 * 6) + 45, (60 * 7) + 30, (60 * 7) + 45, (60 * 8) + 0, (60 * 8) + 15, (60 * 8) + 30, (60 * 8) + 45, (60 * 9) + 20];
 
 			s.sync;
 			//p[\electronics][0] = d.sourceSounds.unveiling;
+
+			d[\init] = true;
 
 			d.cues.putPairs(
 				[\1, (
@@ -1178,6 +1233,11 @@ fork{
 						~rawPiano.set(\reset, 44100 * time, \t_trig, 1);
 						d[\gui][\startTime] = Main.elapsedTime - time;
 						};*/
+						if(d[\init]){
+							//s.record;
+							//s.record(numChannels: 3);
+							d[\init] = false;
+						};
 
 						//for testing
 						d[\midiPiano] = {
@@ -1189,9 +1249,15 @@ fork{
 
 							PlayBuf.ar(2,buff,BufRateScale.kr(buff), trig,reset);
 						};
-						~rawPiano = {d[\midiPiano].(reset: \reset.kr(0))} * 0.3;
-						~drySimulator = ~rawPiano * 1;
-						~drySimulator.play;
+
+						if(d[\live]){
+							~rawPiano = {SoundIn.ar(0)};
+						}
+						{
+							~rawPiano = {d[\midiPiano].(reset: \reset.kr(0))} * 0.3;
+							~drySimulator = ~rawPiano * 1;
+							~drySimulator.play;
+						};
 
 						//otherwise ~rawPiano = {SoundIn.ar(0)};
 
@@ -1199,7 +1265,7 @@ fork{
 
 						~piano.fadeTime = 0;
 
-						~pno1 = ~rawPiano;
+						~pno1 = ~rawPiano * 8;
 						~pno1[1] = d.filters.autoPan;
 						~pno1[2] = d.filters.pbfb;
 						~pno1[3] = d.filters.loopFilterLong;
@@ -1208,7 +1274,7 @@ fork{
 
 						~electronics.fadeTime = 0;
 
-						~electronics = ~aSpec * 0.01;//0.1;
+						~electronics = ~aSpec * 0.2;//0.1;
 						~aSpec.set(\trig, 0);
 						~aSpec.set(\trig, 1);
 					},
@@ -1228,9 +1294,9 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~piano.fadeTime = 3;
+						~piano.fadeTime = 1;
 
-						~pno2 = ~rawPiano;
+						~pno2 = ~rawPiano  * 8;
 						~pno2[1] = d.filters.autoPan;
 						~pno2[3] = d.filters.pbfb2;
 						~pno2[4] = d.filters.loopFilterShort;
@@ -1310,16 +1376,16 @@ fork{
 						d.phasesH.targLowest = 0;
 						d.phasesH.chordNum = 1;
 						~phasesH.resume;
-						~elec2 = ~phasesH * 0.3;
+						~elec2 = ~phasesH * 0.8;
 						~aSpec.set(\trig, 1);
-						~elec2[1] = ~aSpec * 0.03;
+						~elec2[1] = ~aSpec * {Line.kr(0.1, 0.4,75)};
 						~elec2[2] = {
 							var buff = d.data.buffs[("chord1/basicLoop").asSymbol];
 							PlayBuf.ar(2, buff, BufRateScale.kr(buff), loop: 1)
-							* EnvGen.ar(Env.new([0,0,1],[60 + 8, 30]))};//crescendo into chord change (and beyond)
+							* EnvGen.ar(Env.new([0,0,1],[60 + 8, 30]))} * 1.5;//crescendo into chord change (and beyond)
 
 						~electronics.fadeTime = 10;
-						~electronics = ~elec2 * 0.3;
+						~electronics = ~elec2 * 0.8;
 					},
 					cleanup: {
 						~phasesH.pause;
@@ -1338,7 +1404,7 @@ fork{
 							d.phasesH.highest = 10;
 						};
 
-						~pno3 = ~rawPiano * 2;
+						~pno3 = ~rawPiano * 6;
 						~pno3[1] = d.filters.autoPan;
 						//~pno3[2] = d.filters.pbfb2;
 						~pno3[3] = d.filters.pbfb1;
@@ -1352,8 +1418,8 @@ fork{
 						d.phasesH.lowest = 0;
 						d.phasesH.targLowest = 0;
 
-						~elec3 = ~phasesH * 0.3;
-						~elec3[1] = {PlayBuf.ar(2, d.data.buffs["chord1-2_mix".asSymbol], BufRateScale.kr(d.data.buffs["chord1-2_mix".asSymbol]))} * 0.5;
+						~elec3 = ~phasesH * 0.9;
+						~elec3[1] = {PlayBuf.ar(2, d.data.buffs["chord1-2_mix".asSymbol], BufRateScale.kr(d.data.buffs["chord1-2_mix".asSymbol]))} * 3;
 
 						d.chordSwells = true;
 						~chordSwells.resume;
@@ -1384,7 +1450,7 @@ fork{
 							d.phasesH.highest = 23;
 						};
 
-						~pno4 = ~rawPiano * 1.5;
+						~pno4 = ~rawPiano * 5;
 						~pno4[1] = d.filters.autoPan;
 						~pno4[2] = \filter -> {|sig| CombC.ar(sig, decaytime: 3)};
 						~pno4[3] = \filter -> {|sig| CombC.ar(sig, maxdelaytime: 0.7, delaytime: 0.7, decaytime: 3)};
@@ -1410,7 +1476,7 @@ fork{
 						d.phasesH.lowest = 0;
 						d.phasesH.targLowest = 0;
 
-						~elec4 = ~phasesH * 0.2;
+						~elec4 = ~phasesH * 0.9;
 						d.chordSwells = true;
 						~chordSwells.resume;
 						~elec4[1] = ~chordSwells * 1;
@@ -1427,7 +1493,7 @@ fork{
 							sig = PlayBuf.ar(2, d.data.buffs["bellPianoChord".asSymbol], BufRateScale.kr(d.data.buffs["bellPianoChord".asSymbol]));
 							sig = FreeVerb2.ar(sig[0],sig[1]);
 							sig;
-						} * 0.5;
+						} * 0.7;
 
 						~electronics.fadeTime = 3;
 						~electronics = ~elec4Filt * 0.3;
@@ -1450,11 +1516,14 @@ fork{
 							d.phasesH.highest = 18;
 						};
 
-						~pno5 = ~rawPiano * 2;
+						~pno5 = ~rawPiano * 6;
 						~pno5[1] = d.filters.autoPan;
 						~pno5[2] = \filter -> {|sig| CombC.ar(sig, decaytime: 3)};
 						~pno5[3] = \filter -> {|sig| CombC.ar(sig, maxdelaytime: 0.7, delaytime: 0.7, decaytime: 3)};
-						~pno5[4] = d.filters.hold;
+
+						//~pno5[4] = d.filters.pbfb1;//?
+
+						~pno5[5] = d.filters.hold;
 
 						~pno4[0] = {};//stop feeding into it
 						~pno5[5] = ~pno4 * {EnvGen.ar(Env.new([1,0],[8]))};//but keep plaing, fading for 8 sec
@@ -1478,29 +1547,29 @@ fork{
 						d.phasesH.lowest = 0;
 						d.phasesH.targLowest = 0;
 
-						~elec5[0] = ~phasesH * 0.4 * {EnvGen.ar(Env.new([1,1,0,0,1],[14,1,12,4]))};
-						~elec5[1] = {PlayBuf.ar(2, d.data.buffs["chord3-4_mix".asSymbol], BufRateScale.kr(d.data.buffs["chord3-4_mix".asSymbol]))} * 0.5;
+						~elec5[0] = ~phasesH * 0.6 * {EnvGen.ar(Env.new([1,1,0,0,1],[14,1,12,4]))};
+						~elec5[1] = {PlayBuf.ar(2, d.data.buffs["chord3-4_mix".asSymbol], BufRateScale.kr(d.data.buffs["chord3-4_mix".asSymbol]))} * 1.3;
 						~elec5[2] = {
 							var time, buff, gate;
 							buff = d.data.buffs["chord4-4b_mix".asSymbol];
 
 							gate = EnvGen.kr(Env([0, 0, 1], [5, 0]));
 							PlayBuf.ar(2, buff, BufRateScale.kr(buff), gate);
-						} * 0.5;
+						} * 1.5;
 						~elec5[3] = {
 							var time, buff, gate;
 							buff = d.data.buffs["chord4b-4c_mix".asSymbol];
 
 							gate = EnvGen.kr(Env([0, 0, 1], [10, 0]));
 							PlayBuf.ar(2, buff, BufRateScale.kr(buff), gate);
-						} * 0.5;
+						} * 1.5;
 						~elec5[4] = {
 							var time, buff, gate;
 							buff = d.data.buffs["chord4c-4_mix".asSymbol];
 
 							gate = EnvGen.kr(Env([0, 0, 1], [15, 0]));
 							PlayBuf.ar(2, buff, BufRateScale.kr(buff), gate);
-						} * 0.5;
+						} * 1.5;
 
 						~hbTrills = {
 							var buff1, buff2, buff3, sig, sig1, sig2, sig3, bot;
@@ -1568,7 +1637,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno6 = ~rawPiano;
+						~pno6 = ~rawPiano * 1.8;
 						~pno6[1] = d.filters.autoPan;
 						~pno6[2] = d.filters.hold;
 						~pno5[0] = {};//stop feeding into it
@@ -1580,7 +1649,7 @@ fork{
 						d.phasesH.chordNum = 5;
 						//~lowReg.play;
 
-						~elec6 = {PlayBuf.ar(2, d.data.buffs["chord4/cresc2".asSymbol], BufRateScale.kr(d.data.buffs["chord4/cresc2".asSymbol]))} * 1;
+						~elec6 = {PlayBuf.ar(2, d.data.buffs["chord4/cresc2".asSymbol], BufRateScale.kr(d.data.buffs["chord4/cresc2".asSymbol]))} * 0.5;
 						//~elec6[1] = ~lowReg * {EnvGen.kr(Env.new([0,0,1],[16,1]))} * 0.5;
 
 
@@ -1588,6 +1657,7 @@ fork{
 						~spec6[1] = d.filters.hold;
 						~elec6[2] = ~spec6 * {EnvGen.kr(Env.new([0,0,1],[17,3]))};
 
+						//this should be ok since the trig env is 45 seconds later (so buf should already be set)
 						~reverse.set(\buff, d.data.buffs["chord5/reverse".asSymbol]);
 						~triggerEnv = {
 							EnvGen.kr(
@@ -1598,7 +1668,7 @@ fork{
 						~reverse.map(\trig, ~triggerEnv);
 
 						//~reverse.set(\trig, 1);
-						~elec6[3] = ~reverse * 0.1;
+						~elec6[3] = ~reverse * 0.09;
 
 
 						~electronics.fadeTime = 15;
@@ -1635,11 +1705,10 @@ fork{
 						~spec7[1] = d.filters.hold;
 						~elec7 = ~spec7;
 
-						~trans.set(\buff, d.data.buffs["chord5-6_mix".asSymbol]);
-						//~trans.set(\trig, 0);
-						~trans.set(\trig, 1);
 
-						~elec7[1] = ~trans;
+						~trans.set(\buff, d.data.buffs["chord5-6_mix".asSymbol], \trig, 1);
+
+						~elec7[1] = ~trans * 0.7;
 						~elec7[2] = ~reverse;
 
 						/*{
@@ -1677,7 +1746,7 @@ fork{
 
 						~electronics.fadeTime = 0.5;
 
-						~elec8 = ~trans;
+						~elec8 = ~trans * 0.7;
 						~spec8 = ~amSpecEb * 0.1 * {SinOsc.kr(1/5.0).range(0.5,1)};
 						~spec8[1] = d.filters.hold;
 						~elec8[1] = ~spec8;
@@ -1705,7 +1774,7 @@ fork{
 
 
 
-						~pno9 = ~rawPiano;
+						~pno9 = ~rawPiano * 1.8;
 						~pno9[1] = d.filters.autoPan;
 						~pno9[2] = d.filters.hold;
 						~pno8[0] = {};//don't input into pbfb3
@@ -1717,9 +1786,8 @@ fork{
 						~spec9[1] = d.filters.hold;
 						~elec9 = ~spec9;
 
-						~reverse.set(\buff, d.data.buffs["chord6/reverse".asSymbol]);
-						~reverse.set(\trig, 1);
-						~elec9[1] = ~reverse;
+						~reverse.set(\buff, d.data.buffs["chord6/reverse".asSymbol], \trig, 1);
+						~elec9[1] = ~reverse * 0.7;
 						~electronics = ~elec9;
 
 					},
@@ -1742,7 +1810,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno10 = ~rawPiano * 2;
+						~pno10 = ~rawPiano * 1.8;
 						~pno10[1] = d.filters.autoPan;
 						~pno10[2] = d.filters.pbfb3;
 						~pno10[3] = d.filters.hold;
@@ -1753,13 +1821,13 @@ fork{
 						~spec10[1] = d.filters.hold;
 						~elec10 = ~spec10;
 
-						~trans.set(\buff, d.data.buffs["chord6-7_mix".asSymbol]);
-						~trans.set(\trig, 1);
-						~elec10[1] = ~trans;
+						~trans.set(\buff, d.data.buffs["chord6-7_mix".asSymbol], \trig, 1);
 
-						~trans.play;
+						~elec10[1] = ~trans * 0.7;
 
-						~elec10[2] = ~reverse;
+						//~trans.play;
+
+						~elec10[2] = ~reverse * 0.7;
 
 						~electronics = ~elec10;
 
@@ -1784,7 +1852,7 @@ fork{
 						};
 
 						//reset delay
-						~pno11 = ~rawPiano * 2;
+						~pno11 = ~rawPiano * 1.8;
 						~pno11[1] = d.filters.autoPan;
 						~pno11[2] = d.filters.pbfb3;
 						~pno11[3] = d.filters.hold;
@@ -1795,7 +1863,7 @@ fork{
 						~spec11 = ~amSpecB * 0.1 * {SinOsc.kr(1/5.0).range(0.5,1)};
 						~spec11[1] = d.filters.hold;
 						~elec11 = ~spec11;
-						~elec11[1] = ~trans;
+						~elec11[1] = ~trans * 0.5;
 
 						~electronics = ~elec11;
 
@@ -1821,7 +1889,7 @@ fork{
 
 						~pno11[0] = {};//don't feed into pbfb3
 
-						~pno12 = ~rawPiano;
+						~pno12 = ~rawPiano * 1.8;
 						~pno12[1] = d.filters.autoPan;
 						~pno12[2] = d.filters.hold;
 						~piano = ~pno12 * 4;
@@ -1852,7 +1920,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno13 = ~rawPiano;
+						~pno13 = ~rawPiano * 1.8;
 						//~pno13[1] = d.filters.autoPan;
 						~pno13[2] =  d[\filtFuncs][\pbfb].value(5.midiratio,
 							0.3,//0.7, //local feedback in 0.1 sec loop
@@ -1875,9 +1943,8 @@ fork{
 						~phasesH.resume;
 						~elec13 = ~phasesH * 0.25;
 
-						~trans.set(\buff, d.data.buffs["chord8-9_morph".asSymbol]);
-						~trans.set(\trig, 1);
-						~elec13[1] = ~trans * 0.25;
+						~trans.set(\buff, d.data.buffs["chord8-9_morph".asSymbol], \trig, 1);
+						~elec13[1] = ~trans * 0.7;
 
 						~electronics = ~elec13;
 
@@ -1901,7 +1968,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno14 = ~rawPiano;
+						~pno14 = ~rawPiano  * 1.8;
 						//~pno14[1] = d.filters.autoPan;
 						~pno14[2] =  d[\filtFuncs][\pbfb].value(5.midiratio,
 							0.3,//0.7, //local feedback in 0.1 sec loop
@@ -1923,10 +1990,9 @@ fork{
 						~phasesH.resume;
 						~elec14 = ~phasesH * 0.3;
 
-						~trans1.set(\buff, d.data.buffs["chord9-10_morph".asSymbol]);
-						~trans1.set(\trig, 1);
-						~elec14[1] = ~trans * 0.25;
-						~elec14[2] = ~trans1 * 0.5;
+						~trans1.set(\buff, d.data.buffs["chord9-10_morph".asSymbol], \trig, 1);
+						~elec14[1] = ~trans * 0.7;
+						~elec14[2] = ~trans1 * 0.7;
 
 						~electronics = ~elec14;
 
@@ -1950,7 +2016,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno15 = ~rawPiano;
+						~pno15 = ~rawPiano  * 1.8;
 						//~pno15[1] = d.filters.autoPan;
 						~pno15[2] =  d[\filtFuncs][\pbfb].value(5.midiratio,
 							0.3,//0.7, //local feedback in 0.1 sec loop
@@ -1972,17 +2038,16 @@ fork{
 						~phasesH.resume;
 						~elec15 = ~phasesH * 0.35;
 
-						~trans.set(\buff, d.data.buffs["chord10-11_morph".asSymbol]);
-						~trans.set(\trig, 1);
-						~elec15[1] = ~trans * 0.4;
-						~elec15[2] = ~trans1 * 0.5;
+						~trans.set(\buff, d.data.buffs["chord10-11_morph".asSymbol], \trig, 1);
+						~elec15[1] = ~trans * 0.2;
+						~elec15[2] = ~trans1 * 0.7;
 						~hbcDroneLoop = {
 							var buff, sig;
 							buff = d.data.buffs["hbcDroneLoop".asSymbol];
 							sig = PlayBuf.ar(2, buff, BufRateScale.kr(buff), loop: 1);
-							sig = sig * EnvGen.ar(Env.new([0,1],[5]));
-							sig = sig * SinOsc.kr(1/20.0).range(0,1);
-							sig * 0.1;
+							sig = sig * EnvGen.ar(Env.new([0,1],[10]));
+							sig = sig * SinOsc.kr(1/40.0).range(0,1);
+							sig * 0.05;
 						};
 						~elec15[3] = ~hbcDroneLoop;
 
@@ -2008,7 +2073,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno16 = ~rawPiano;
+						~pno16 = ~rawPiano * 1.8;
 						//~pno16[1] = d.filters.autoPan;
 						~pno16[2] =  d[\filtFuncs][\pbfb].value(5.midiratio,
 							0.3,//0.7, //local feedback in 0.1 sec loop
@@ -2030,22 +2095,21 @@ fork{
 						~phasesH.resume;
 						~elec16 = ~phasesH * 0.4;
 
-						~trans1.set(\buff, d.data.buffs["chord11-12_morph".asSymbol]);
-						~trans1.set(\trig, 1);
-						~elec16[1] = ~trans * 0.4;
-						~elec16[2] = ~trans1 * 0.55;
+						~trans1.set(\buff, d.data.buffs["chord11-12_morph".asSymbol], \trig, 1);
+						~elec16[1] = ~trans * 0.2;
+						~elec16[2] = ~trans1 * 0.7;
 
 
-						~triggerEnv = {
-							EnvGen.kr(
-								Env([0, 0, 1, 0], [17, 0.01, 0.01], \step),
-								doneAction: 2  // free the synth when done
-							)
-						};
-						~crash.map(\trig, ~triggerEnv);
+						/*~triggerEnv = {
+						EnvGen.kr(
+						Env([0, 0, 1, 0], [0, 0.01, 0.01], \step),
+						doneAction: 2  // free the synth when done
+						)
+						};*/
+						~crash.set(\trig, 1);
 
 
-						~elec16[3] = ~crash;
+						~elec16[3] = ~crash * 0.95;
 						~elec16[4] = ~hbcDroneLoop;
 
 						~electronics = ~elec16;
@@ -2070,28 +2134,28 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno17 = ~rawPiano;
+						~pno17 = ~rawPiano * 2;
 						~pno17[1] = d.filters.autoPan;
 						~pno17[2] =  d.filters.hold;
 						~piano = ~pno17 * 4;
 
 						~electronics.fadeTime = 2;
 
-						~elec17 = ~trans1 * 0.55;
+						~elec17 = ~trans1 * 0.7;
 
 						/*~hbDrones.resume;
 
 						~lpDrones = ~hbDrones * {SinOsc.kr(1/5.0).range(0.005, 0.01)};
 						~lpDrones[1] = \filter -> {|sig| LPF.ar(sig,1000)};*/
 
-						~codaBells.resume;
+						d.codaBellArr.do{|cb| cb.resume};
 						d.coda.factor = 1;
 						~codaBells.set(\factor, 3);
 						d.coda.chordOptions = [11];
 
 						//~lpDrones.play;
-						~elec17[1] = ~codaMix * 0.5;
-						~elec17[2] = ~crash;
+						~elec17[1] = ~codaMix;
+						~elec17[2] = ~crash * 0.95;
 
 						~electronics = ~elec17;
 
@@ -2116,7 +2180,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno18 = ~rawPiano;
+						~pno18 = ~rawPiano * 2;
 						~pno18[1] = d.filters.autoPan;
 						~pno18[2] =  d.filters.hold;
 
@@ -2125,25 +2189,27 @@ fork{
 						~piano = ~pno18 * 4;
 
 						~electronics.fadeTime = 10;
-						~codaBells.resume;
+						d.codaBellArr.do{|cb| cb.resume};
 						d.coda.factor = 1;
 						~codaBells.set(\factor, 1);
 						d.coda.chordOptions = [12,13];
 
-						~gradulVeiling = {
+						~elec18 = ~codaMix;
+
+						~gradualVeiling = {
 							var buff, sig;
 							buff = d.data.buffs["gradual_veiling_clustered3".asSymbol];
 							sig = PlayBuf.ar(2, buff, BufRateScale.kr(buff));
-							sig = sig * EnvGen.kr(Env.new([0,1],[30]));
+							sig = sig * EnvGen.kr(Env.new([0,1,0.5,0],[20,80,20])) * SinOsc.kr(1/12.0,pi / 4.0).range(0,1);
 							sig = FreeVerb2.ar(sig[0], sig[1]);
-							sig;
+							sig * 0.2;
 						};
-						~elec18 = ~codaMix;
-						~elect18[1] = ~gradualVeiling;
+						//~elec18[1] = ~gradualVeiling;
+						~out[2] = ~gradualVeiling;
 						~electronics = ~elec18;
 					},
 					cleanup: {
-						~codaBells.pause;
+						d.codaBellArr.do{|cb| cb.pause};
 					},
 					prep: {
 
@@ -2159,7 +2225,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno19 = ~rawPiano;
+						~pno19 = ~rawPiano * 2;
 						~pno19[1] = d.filters.autoPan;
 						~pno19[2] =  d.filters.hold;
 						~pno18[0] = {};
@@ -2167,16 +2233,16 @@ fork{
 						~piano = ~pno19 * 4;
 
 						~electronics.fadeTime = 2;
-						~codaBells.resume;
+						d.codaBellArr.do{|cb| cb.resume};
 						d.coda.factor = 1;
 						~codaBells.set(\factor, 1);
 						d.coda.chordOptions = [14,15];
 						~elec19 = ~codaMix;
-						~elect19[1] = ~gradualVeiling;
+						//~elect19[1] = ~gradualVeiling;
 						~electronics = ~elec19;
 					},
 					cleanup: {
-						~codaBells.pause;
+						d.codaBellArr.do{|cb| cb.pause};
 					},
 					prep: {
 
@@ -2192,7 +2258,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno20 = ~rawPiano;
+						~pno20 = ~rawPiano * 2;
 						~pno20[1] = d.filters.autoPan;
 						~pno20[2] =  d.filters.hold;
 						~pno19[0] = {};
@@ -2200,16 +2266,16 @@ fork{
 						~piano = ~pno120 * 4;
 
 						~electronics.fadeTime = 2;
-						~codaBells.resume;
+						d.codaBellArr.do{|cb| cb.resume};
 						d.coda.factor = 0.5;
 						~codaBells.set(\factor, 0.5);
 						d.coda.chordOptions = [16,17,18];
 						~elec20 = ~codaMix;
-						~elect20[1] = ~gradualVeiling;
+						//~elect20[1] = ~gradualVeiling;
 						~electronics = ~elec20;
 					},
 					cleanup: {
-						~codaBells.pause;
+						d.codaBellArr.do{|cb| cb.pause};
 					},
 					prep: {
 
@@ -2225,7 +2291,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno21 = ~rawPiano;
+						~pno21 = ~rawPiano * 2;
 						~pno21[1] = d.filters.autoPan;
 						~pno21[2] =  d.filters.hold;
 						~pno20[0] = {};
@@ -2234,16 +2300,16 @@ fork{
 
 						~electronics.fadeTime = 2;
 						d.coda.factor = 1;
-						~codaBells.resume;
+						d.codaBellArr.do{|cb| cb.resume};
 						~codaBells.set(\factor, 1);
 						d.coda.chordOptions = [19];
 
 						~elec21 = ~codaMix * {EnvGen.kr(Env.new([1,0],[60]))};
-						~elect21[1] = ~gradualVeiling;
+						//~elect21[1] = ~gradualVeiling;
 						~electronics = ~elec21;
 					},
 					cleanup: {
-						~codaBells.pause;
+						d.codaBellArr.do{|cb| cb.pause};
 					},
 					prep: {
 
@@ -2259,7 +2325,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno22 = ~rawPiano;
+						~pno22 = ~rawPiano * 2;
 						~pno22[1] = d.filters.autoPan;
 						~pno22[2] =  d.filters.hold;
 						~pno21[0] = {};
@@ -2267,11 +2333,11 @@ fork{
 						~piano = ~pno22 * 4;
 
 						~electronics.fadeTime = 2;
-						~codaBells.resume;
+						d.codaBellArr.do{|cb| cb.resume};
 						~codaBells.set(\factor, 1);
 						d.coda.chordOptions = [20,21];
 						~elec22 = ~elec21;
-						~elect22[1] = ~gradualVeiling;
+						//~elect22[1] = ~gradualVeiling;
 						~electronics = ~elec22;
 					},
 					cleanup: {
@@ -2290,7 +2356,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno23 = ~rawPiano;
+						~pno23 = ~rawPiano * 2;
 						~pno23[1] = d.filters.autoPan;
 						~pno23[2] =  d.filters.hold;
 						~pno22[0] = {};
@@ -2299,10 +2365,10 @@ fork{
 
 						~electronics.fadeTime = 2;
 						d.coda.chordOptions = [22,23];
-						~codaBells.resume;
+						d.codaBellArr.do{|cb| cb.resume};
 						~codaBells.set(\factor, 1);
 						~elec23 = ~elec21;
-						~elect23[1] = ~gradualVeiling;
+						//~elect23[1] = ~gradualVeiling;
 						~electronics = ~elec23;
 					},
 					cleanup: {
@@ -2321,7 +2387,7 @@ fork{
 							d[\gui][\startTime] = Main.elapsedTime - time;
 						};
 
-						~pno24 = ~rawPiano;
+						~pno24 = ~rawPiano * 2;
 						//~pno24[1] = d.filters.autoPan;
 						//~pno24[2] =  d.filters.hold;
 						~piano = ~pno24 * 4;
@@ -2336,14 +2402,14 @@ fork{
 							sig = sig * EnvGen.kr(Env.new([1,0],[45],-3));
 							//sig.dup;
 							sig = LPF.ar(sig, 15000);
-							sig * 0.01;
+							sig * 0.005;
 						};
 
 						d.coda.chordOptions = [24];
-						~codaBells.resume;
+						d.codaBellArr.do{|cb| cb.resume};
 						~codaBells.set(\factor, 1);
 						~elec24[1] = ~elec21;
-						~elect24[2] = ~gradualVeiling;
+						//~elect24[2] = ~gradualVeiling;
 
 						~piano = ~elec24;
 					},
@@ -2408,390 +2474,8 @@ fork{
 			~chordSwells.pause;
 			~lowReg.pause;
 			~hbDrones.pause;
-			~codaBells.pause;
+			d.codaBellArr.do{|cb| cb.pause};
 		};
 	};
 };
 )
-
-(
-{
-	var crash, osTime = 0;//17
-	~crash = {
-		var buff, sig, trig, rate = 1, invQ = 100;
-		trig = \trig.tr(0);
-		buff = d.data.buffs[("drammaticCrash").asSymbol];
-		sig = PlayBuf.ar(2, buff, BufRateScale.kr(buff) * rate, trig);
-		//sig = BPF.ar(sig, 440, invQ);
-		sig = FreeVerb.ar(sig);
-		sig;
-	};
-
-
-	~triggerEnv = {
-		EnvGen.kr(
-			Env([0, 0, 1, 0], [osTime, 0.01, 0.01], \step),
-			doneAction: 2  // free the synth when done
-		)
-	};
-	~crash.map(\trig, ~triggerEnv);
-	~electronics.fadeTime = 0;
-	~electronics = ~crash;
-}.value;
-)
-
-
-(
-~crash = {
-	var buff, sig;
-	buff = d.data.buffs[("drammaticCrash").asSymbol];
-	sig = PlayBuf.ar(2, buff, BufRateScale.kr(buff));
-	/*3.do({
-	var dec = 0.2.rand + 0.2;
-	dec.postln;
-	sig = CombC.ar(sig, dec, dec, 5, 0.5);
-	});*/
-	sig = FreeVerb.ar(sig);
-	sig;
-};
-~electronics.fadeTime = 0;
-~electronics = ~crash;
-)
-
-(
-~hbTrills = {
-	var buff1, buff2, buff3, sig, sig1, sig2, sig3, bot;
-	buff1 = d.data.buffs[("trM1").asSymbol];
-	buff2 = d.data.buffs[("trM2").asSymbol];
-	buff3 = d.data.buffs[("trM3").asSymbol];
-
-	bot = EnvGen.kr(Env.asr(20, curve: 0)).range(-1000, -1);
-
-	sig1 = Mix.ar(PlayBuf.ar(2, buff1, BufRateScale.kr(buff1), loop: 1));
-	sig2 = Mix.ar(PlayBuf.ar(2, buff2, BufRateScale.kr(buff1), loop: 1));
-	sig3 = Mix.ar(PlayBuf.ar(2, buff3, BufRateScale.kr(buff1), loop: 1));
-
-	sig = Mix.ar([Pan2.ar(sig1 * SinOsc.kr(1/5.0, pi / 2.0).range(bot,1).clip(0,1), SinOsc.kr(1/7.0).range(-1,1)),
-		Pan2.ar(sig2 * SinOsc.kr(1/6.0, pi / 2.0).range(bot,1).clip(0,1), SinOsc.kr(1/5.0).range(-1,1)),
-		Pan2.ar(sig2 * SinOsc.kr(1/7.0, pi / 2.0).range(bot,1).clip(0,1), SinOsc.kr(1/6.0).range(-1,1))]);
-
-	sig = CombC.ar(sig, 0.25, 0.25,3);
-	sig = CombC.ar(sig, 0.37, 0.37,3);
-	sig = CombC.ar(sig, 0.643, 0.643,3);
-	sig = FreeVerb.ar(sig);
-	sig * 0.1;
-};
-~hbTrills[1] = d.filters.hold;
-
-~hbTrills[2] = d[\filtFuncs][\pbfb].value(-5.midiratio,
-	0.3,//0.9, //local feedback in 0.5 sec loop
-	0.5);
-~hbTrills[3] = d[\filtFuncs][\pbfb].value(-5.midiratio,
-	0.3,//0.9, //local feedback in 0.5 sec loop
-	0.1);
-~hbTrills[4] = \filter -> {|sig|
-	3.do({
-		sig = HPF.ar(sig,220);
-	});
-	sig;
-};
-
-~electronics = ~hbTrills;
-)
-
-0.5.clip(0,1);
-
-~electronics = {};
-
-(3/10).floor
-
-~electronics = ~codaBells * 0.01;
-(
-SynthDef.new(\drone, {
-	arg buff, out = 0;
-	var sig, env;
-	sig = PlayBuf.ar(2, buff, BufRateScale.kr(buff), doneAction: Done.freeSelf);
-	env = EnvGen.kr(Env.new([0,1,1,0], [1,3,1]));
-	Out.ar(out, sig * env);
-}).add;
-)
-(
-~hbDrones = Pbind(
-	\instrument, \drone,
-	\buff, Routine({
-		var n = 0;
-		loop{
-			var droneNum = 4;
-			if(true){droneNum = 1 + 3.rand};
-			n = n + 1;
-			d.data.buffs[("hbc"++droneNum++"Drone").asSymbol].yield;
-		};
-	}),
-	\dur, Pfunc({1 + 3.rand})
-);
-)
-~hbDrones.free;
-~hbDrones.resume;
-~electronics = ~hbDrones * 0.01;
-
-~hbDrones.pause;
-~hbDrones.resume;
-~electronics = ~hbDrones * 0.1;
-
-~rawPiano.set(\reset, BufSampleRate.kr(d.data.buffs["piano".asSymbol]) * 3, \t_trig, 1);
-
-~rawPiano.set(\reset, 44100 * 405, \t_trig, 1);
-(
-~drone = {
-	var buff = d.data.buffs[("hbc1Drone").asSymbol];
-	PlayBuf.ar(2, buff, BufRateScale.kr(buff), startPos: 48000 * 30, loop: 1);
-};
-~electronics = ~drone * 0.1 * {EnvGen.ar(Env.new([0,1],[5]))};
-)
-~electronics = {};
-
-Synth.new(\playBufWithAutoPan, [\buff, d.data.buffs[("hbctext/hbc" ++ d.hbc.chordNum ++ "_" ++ 1).asSymbol]]);
-~electronics = ~hbc * {SinOsc.kr(1 / 5.0, 0.5).range(0.5,1)};
-~phasesH.resume;
-~hbc.resume;
-d.hbc.chordNum = 1;
-~electronics = {};
-
-~recap1EffectBay[1] =  d[\filtFuncs][\pbfb].value(5.midiratio,
-	0.3,//0.7, //local feedback in 0.1 sec loop
-	0.1);//d.filters.pbfb;//\filter -> d.filtFuncs.pbfb.(-5.midiratio);
-
-~recap1EffectBay[2] = \filter -> {|sig| CombC.ar(sig, 0.8, 0.8, decaytime: 10)};
-~recap1EffectBay[3] =  d[\filtFuncs][\pbfb].value(5.midiratio,
-	0.5,//0.7, //local feedback in 0.5 sec loop
-	0.5);
-~recap1EffectBay[4] = \filter -> {|sig| CombC.ar(sig, 0.7, 0.7, decaytime: 10)};
-
-(
-~pnoTest = {
-	var buff = d.data.buffs[("piano").asSymbol];
-	//~pnoTrig = {Impulse.kr(1/(40.0))};
-	PlayBuf.ar(2,buff, BufRateScale.kr(buff), trigger: Impulse.kr(1/40.0), startPos: 44100 * ((7*60)+5), loop: 1);
-};
-~test = ~pnoTest;
-//~test[1] = {};
-
-~test.play;
-)
-
-
-
-(
-~test[1] = \filter -> {
-	|sig|
-	var local, feedback;
-
-	feedback = 0.95;
-
-	local = LocalIn.ar(2)+sig;
-	10.do{local = AllpassN.ar(local, 0.2, 0.1.rand + 0.05, 1)};
-
-	local = LeakDC.ar(local);
-
-	LocalOut.ar(local*feedback);
-
-	sig+local;
-};
-)
-
-(
-~test[2] = \filter -> {
-	|sig|
-	sig.madd(5).tanh.madd(0.1);
-}
-)
-
-(
-d.filters.bpChord = \filter -> {
-	arg sig;
-	var notes = [60,62,64,67,69,71], sigs = sig!notes.size, octs = 6;
-
-	//replicate in 6 octaves up
-	notes = Array.fill(octs, {|idx| notes + (12 * idx)}).reshape(notes.size * octs);
-	sigs = sig!notes.size;
-
-	notes.postln;
-	sigs.size.postln;
-
-
-	notes.do({
-		arg n, idx;
-		var qFreq = 1 / (6 + 6.0.rand), filtered, rq, mul, qEnvGen, gate, dry;
-
-		dry = sig;
-
-		gate = LFPulse.kr(qFreq);
-
-		/*qEnvGen = EnvGen.ar(Env.asr(1,1,1), gate);
-		rq = qEnvGen.range(0.01,3);
-		mul = qEnvGen.range(1.5,1);*/
-		rq = 0.01;
-		mul = 1.5;
-
-		filtered = sig;
-		10.do({filtered = BPF.ar(filtered, n.midicps, rq, mul)});
-		sigs[idx] = SelectX.ar(SinOsc.kr(qFreq, 1.0.rand).range(0,1),[filtered,dry.madd(0.125)]);
-	});
-
-
-	Mix.ar(sigs).madd(0.1);
-};
-~test[2] = d.filters.bpChord;
-)
-~tanh.free
-~test.free;
-~tanh = {SinOsc.ar(440, mul: 3).tanh * 0.1};
-~tanh.play;
-(
-{
-	var qFreq = 1 / 3, qEnvGen, gate, mul, q;
-	gate = LFPulse.kr(qFreq);
-	qEnvGen = EnvGen.ar(Env.asr(1,1,1), gate);
-	q = qEnvGen.range(2,3);
-	//mul = qEnvGen.exprange(1.5,1);
-	q;
-}.plot(6);
-)
-
-{LFPulse.kr(1/3)}.plot(3);
-
-(
-d.filters.bpChord = \filter -> {
-	arg sig;
-	var notes = [60, 62, 64, 67, 69, 71], out, sigs = sig!notes.size;
-	out = sig;
-	notes.do({
-		arg n, idx;
-		var qFreq = 1 / (10.0.rand + 10), filtered, q, mod, mul;
-		mod = SinOsc.kr(qFreq);//.range(0.1,1);
-		q = 0.01;//mod.range(0.01,3);//0.01;//0.01;//mod.range(0.01,3);
-		mul = 1.5;//mod.range(1.5,1);//1.5;//0.1 + (1.4 - mod.range(0,1.4));
-
-		q = mod.range(0.01,10);
-		mul = 1;//LFTri.ar(qFreq).exprange(1.7,1);//Tri.range(1.5,1);
-		/*q=0.01;
-		mul = 1.5;*/
-
-		filtered = sig;
-		1.do({filtered = CombC.ar(filtered, 1 /n.midicps, 1/n.midicps, q, mul)});
-		sigs[idx] = filtered.madd(mod.exprange(1,0.05));//.madd(LFTri.ar(qFreq).exprange(1,1));
-	});
-
-	//sig;
-	Mix.ar(sigs).madd(0.01);
-};
-~test[2] = d.filters.bpChord;
-)
-
-
-~test[3] = d.filters.bpChord;
-
-(
-{
-	var sig = SinOsc.ar(1);
-
-	[sig.range(0,1),sig.range(1,0), LFTri.ar(1)];
-}.plot(1);
-)
-
-q = 2!3;
-
-
-
-~electronics = ~lowReg;
-~phasesH.resume;
-d.phasesH.chordNum = 5;
-~electronics = 	~phasesH;
-d.phasesH.targHighest = 23;
-d.phasesH
-
-"amSpec_a1.wav"
-(
-{
-	13.do({arg n;
-		var buff = d.data.buffs[("amSpec_a" ++ (n+1)).asSymbol],
-		rnd = 1.0.rand,
-		buff1 = d.data.buffs[("amSpec_b" ++ (n+1)).asSymbol];
-		rnd.postln;
-		//buff.postln;
-		if(buff.notNil){
-			~sig[n] = {var sig = PlayBuf.ar(2, buff, BufRateScale.kr(buff), loop: 1);
-				Pan2.ar(Mix.ar(sig), SinOsc.kr(1/(5.0 + rnd), rnd).range(-0.5,0.5));
-			}
-		};
-		if(buff1.notNil){
-			~sig1[n] = {var sig = PlayBuf.ar(2, buff1, BufRateScale.kr(buff1), loop: 1);
-				Pan2.ar(Mix.ar(sig), SinOsc.kr(1/(5.0 + rnd), rnd).range(-0.5,0.5));
-			};
-		};
-	});
-}.value;
-)
-
-d.filters.harmonicSeries
-~filtSig = ~sig * 0.1;
-~filtSig[1] = d.filters.autoPan;
-~electronics = ~sig1 * 0.1;
-~electronics[1] = d.filters.hold;
-~electronics.fadeTime = 7;
-~electronics.fadeTime = 0;
-~electronics = ~sig * 0.1;
-~electronics[1] = \filter -> {|sig| PitchShift.ar(sig, pitchRatio: 2.midiratio)};
-~electronics[1] = \filter -> {|sig| LPF.ar(sig,)};
-
-(
-{
-	s.record;
-	~sig = {PlayBuf.ar(2, d.data.buffs[("chord1/basicLoop").asSymbol], BufRateScale.kr(d.data.buffs[("chord1/basicLoop").asSymbol]))};
-	~sig.play;
-	~sig[1] = \filter -> {
-		|sig|
-		var local, feedback;
-
-		feedback = 0.9;
-
-		local = LocalIn.ar(2)+sig;
-		25.do{local = AllpassN.ar(local, 0.2, 0.1.rand + 0.05, 1)};
-
-		local = LeakDC.ar(local);
-
-		LocalOut.ar(local*feedback);
-
-		sig+local;
-	};
-}.value;
-)
-
-{LFPulse.ar(1)}.plot(1);
-
-t = Synth.new(\playBufWithAutoPan, [\buff, d.data.buffs[("chord" ++ 1 ++ "/many_octaves" ++ 5).asSymbol]]);
-t.free;
-d.phasesH.chordNum = 2;
-~chordSwells.resume;
-~chordSwells.play;
-d.chordSwells = true;
-
-~out = {};
-~drySimulator = {};
-
-~phasesH.pause;
-~phasesH.resume;
-~electronics = ~phasesH;
-
-
-~piano = ~rawPiano;
-
-//for testing
-~rawPiano = {PlayBuf.ar(2, d.data.buffs[\piano], BufRateScale.kr(d.data.buffs[\piano]), loop: 1).madd(2)};
-~drySimulator = ~rawPiano * 0.25;
-~drySimulator.play;
-
-d[\cleanExec].(1);
-d[\cleanExec].(2);
-
-d[\cleanExec].(3);

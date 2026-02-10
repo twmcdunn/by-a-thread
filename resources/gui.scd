@@ -13,6 +13,8 @@ d[\gui][\startTime] = Main.elapsedTime;
 d[\gui][\window] = nil;
 d[\gui][\test] = false;
 d[\gui][\lastElapsed] = -1;
+d[\recording] = false;
+
 
 // Define cue key mapping (qwerty layout, left to right, top to bottom)
 d[\gui][\cueKeys] = "qwertyuiopasdfghjklzxcvbnm1234567890";
@@ -62,10 +64,11 @@ d[\executeCue] = { |cueNum|
 // ============================================================================
 d[\createPerformanceGUI] = {
 	var win, mainView, topBar, specView, levelView;
-	var timeText, cueNumText, levelMeter;
+	var timeText, cueNumText, levelMeter, testText;
 	var freqScope, scopeBus, levelBus;
 	var timeUpdate, levelUpdate, levelMessanger;
 	var instructionsView, instrWidth;
+	var recordButton, recordLED, recordPulse;
 
 	// Close existing window if present
 	if(d[\gui][\window].notNil, { d[\gui][\window].close; });
@@ -79,6 +82,7 @@ d[\createPerformanceGUI] = {
 	.background_(Color.new(0.12, 0.12, 0.14))
 	.onClose_({
 		timeUpdate.stop;
+		recordPulse.stop;
 		if(levelUpdate.notNil, { levelUpdate.stop });
 		d[\gui][\window] = nil;
 	});
@@ -99,6 +103,14 @@ d[\createPerformanceGUI] = {
 	.stringColor_(Color.new(0.4, 0.9, 0.95))
 	.align_(\left);
 
+	if(d[\live].not){
+		testText = StaticText(topBar, Rect(320, 10, 620, 60))
+		.string_("TEST")
+		.font_(Font("Monaco", 48, true))
+		.stringColor_(Color.new(0.4, 0.9, 0.95))
+		.align_(\left);
+	};
+
 	// Current cue display
 	cueNumText = StaticText(topBar, Rect(topBar.bounds.width - 250, 10, 230, 60))
 	.string_("CUE 1")
@@ -107,6 +119,35 @@ d[\createPerformanceGUI] = {
 	.align_(\right);
 
 	d[\gui][\cueNumText] = cueNumText;
+
+	// ===============================
+	// RECORD BUTTON
+	// ===============================
+
+	// Record toggle button
+	recordButton = Button(topBar, Rect(topBar.bounds.width - 290, 18, 120, 44))
+	.states_([
+		["● REC", Color.white, Color.new(0.3, 0.05, 0.08)],
+		["● REC", Color.new(1,0.4,0.5), Color.new(0.15, 0.03, 0.05)]
+	])
+	.font_(Font("Monaco", 18, true))
+	.action_({ |btn|
+		d[\recording] = btn.value == 1;
+		//recordLED.refresh;
+		if(d[\recording])
+		{
+			s.record(numChannels: d[\numRecChannels]);
+		}
+		{
+			s.stopRecording;
+		}
+	});
+
+	//default to off
+	recordButton.value = 0;
+	//recordLED.refresh;
+
+
 
 	// ========================================================================
 	// SPECTROGRAPH SECTION
@@ -243,15 +284,16 @@ d[\createPerformanceGUI] = {
 			{ timeText.string = d[\formatTime].(elapsed); }.defer;
 
 			/*if(d[\gui][\test]){
-				d[\cueTimes].do({|ct, idx|
-					if((ct <= elapsed) && (ct > d[\gui][\lastElapsed])){d[\cleanExec].(idx+1)}
-				});
+			d[\cueTimes].do({|ct, idx|
+			if((ct <= elapsed) && (ct > d[\gui][\lastElapsed])){d[\cleanExec].(idx+1)}
+			});
 			};*/
 
 			d[\gui][\lastElapsed] = elapsed;
 			0.1.wait;
 		};
 	});
+
 
 	// ========================================================================
 	// KEYBOARD CONTROL
